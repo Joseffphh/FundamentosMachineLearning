@@ -1,62 +1,86 @@
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
+import numpy as np
 
-# 1. Cargar los datos
+#Cargar los datos
 df_train = pd.read_csv('entrenamiento.csv', index_col='ID')
 df_test = pd.read_csv('prueba.csv', index_col='ID')
 
-# 2. Separar los atributos (X) multivariados
 atributos = ['Fuerza', 'Destreza', 'Inteligencia', 'Constitución', 'Suerte']
-X_train = df_train[atributos]
-X_test = df_test[atributos]
 
-# Las clases que queremos evaluar
+# Pasamos los datos a formato Numpy (matrices) para poder hacer matemáticas
+X_train = df_train[atributos].values
+X_test = df_test[atributos].values
+
+# Para calcular el coeficiente independiente (b0),
+# necesitamos agregar una columna llena de unos (1) al principio de nuestros datos.
+X_train_b = np.c_[np.ones(X_train.shape[0]), X_train]
+X_test_b = np.c_[np.ones(X_test.shape[0]), X_test]
+
+
+# La fórmula Sigmoide que convierte números Z en probabilidades de 0 a 1
+def sigmoide(z):
+    z = np.clip(z, -250, 250)  # Clip evita que la computadora colapse con números gigantes
+    return 1 / (1 + np.exp(-z))
+
+
+# El reemplazo manual de modelo.fit()
+def entrenar_manualmente(X, y, tasa_aprendizaje=0.005, iteraciones=10000):
+    pesos = np.zeros(X.shape[1])  # b0, b1, b2... empiezan en cero
+    total_datos = len(y)
+
+    for i in range(iteraciones):
+        # 1. Multiplicar atributos por pesos (Z) y aplicar sigmoide
+        z = np.dot(X, pesos)
+        predicciones = sigmoide(z)
+
+        # 2. Calcular qué tan equivocados estamos (Error)
+        error = predicciones - y
+
+        # 3. Ajustar los pesos usando el Gradiente
+        gradiente = np.dot(X.T, error) / total_datos
+        pesos = pesos - (tasa_aprendizaje * gradiente)
+
+    return pesos  # Devuelve los coeficientes b0 a b5 ya entrenados
+
+
+#Aplicamos el motor a las clases
+
 clases_rpg = ['Guerrero', 'Pícaro', 'Mago', 'Guardián']
+pesos_guardados = {}  # Aquí guardaremos los coeficientes (b) de cada clase
 
-# 3. Entrenar y evaluar un modelo para cada clase
+print("Entrenamiento manual \n")
 for clase in clases_rpg:
-    # Crear variable objetivo (Y) binaria: 1 si es la clase, 0 si no lo es
-    y_train = (df_train['Clase'] == clase).astype(int)
-    y_test = (df_test['Clase'] == clase).astype(int)
+    # 1 si es la clase, 0 si no
+    y_train = (df_train['Clase'] == clase).astype(int).values
+    y_test = (df_test['Clase'] == clase).astype(int).values
 
-    # Iniciar y entrenar el modelo de Regresión Logística
-    modelo = LogisticRegression()
-    modelo.fit(X_train, y_train)
+    # Entrenar
+    pesos = entrenar_manualmente(X_train_b, y_train)
+    pesos_guardados[clase] = pesos  # Guardar b0..b5 para usarlos luego
 
-    # Calcular la precisión usando los 20 registros de prueba
-    precision = modelo.score(X_test, y_test)
+    # Evaluar precisión
+    probabilidades_test = sigmoide(np.dot(X_test_b, pesos))
+    predicciones_test = (probabilidades_test >= 0.5).astype(int)
 
-    # Mostrar resultados
-    print(f"Modelo: ¿Es {clase}?")
-    print(f"Precisión: {precision * 100:.1f}%\n")
+    # Comparamos nuestras predicciones con la realidad
+    precision = np.mean(predicciones_test == y_test)
+    print(f"Modelo Manual: ¿Es {clase}? -> Precisión: {precision * 100:.1f}%")
 
-    # (Asumiendo que ya tienes cargados df_train y X_train como en el paso anterior)
-    atributos = ['Fuerza', 'Destreza', 'Inteligencia', 'Constitución', 'Suerte']
-    clases_rpg = ['Guerrero', 'Pícaro', 'Mago', 'Guardián']
 
-    # 1. Crear un "nuevo personaje" para evaluar (o tomar uno de tus datos de prueba)
-    # Este personaje tiene: Fuerza alta (89), y
-    nuevo_personaje = pd.DataFrame(
-        [[89, 13, 26, 8, 78]],
-        columns=atributos
-    )
+# Personaje: Fuerza 89, Destreza 13, Inteligencia 26, Constitución 8, Suerte 78
+nuevo_personaje = np.array([89, 13, 26, 8, 78])
+# Le agregamos el '1' al principio para que multiplique al b0
+nuevo_personaje_b = np.insert(nuevo_personaje, 0, 1)
 
-    print("Evaluando al personaje:")
-    print(nuevo_personaje.to_markdown(), "\n")
+print("\n")
+for clase in clases_rpg:
+    # Recuperamos los coeficientes que la computadora aprendió para esta clase
+    pesos_clase = pesos_guardados[clase]
 
-    # 2. Iterar por cada clase para ver qué opina cada modelo
-    for clase in clases_rpg:
-        # Entrenar el modelo (como lo hicimos antes)
-        y_train = (df_train['Clase'] == clase).astype(int)
-        modelo = LogisticRegression()
-        modelo.fit(X_train, y_train)
+    # Calculamos Z multiplicando los atributos del personaje por los pesos
+    z = np.dot(nuevo_personaje_b, pesos_clase)
 
-        # 3. Calcular el valor proyectado (Probabilidad)
-        # predict_proba devuelve una matriz con 2 valores: [Prob de NO ser, Prob de SI ser]
-        probabilidad_completa = modelo.predict_proba(nuevo_personaje)
+    # Pasamos Z por la función sigmoide para obtener el porcentaje
+    prob_si_es_clase = sigmoide(z)
 
-        # Extraemos solo el segundo valor (índice 1), que es la probabilidad de que SÍ sea de la clase
-        prob_si_es_clase = probabilidad_completa[0][1]
-
-        # Mostrar el porcentaje
-        print(f"Probabilidad de ser {clase}: {prob_si_es_clase * 100:.2f}%")
+    print(f"Probabilidad de ser {clase}: {prob_si_es_clase * 100:.2f}%")
